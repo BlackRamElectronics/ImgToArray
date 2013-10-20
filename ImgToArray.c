@@ -1,3 +1,14 @@
+//====================================================================================
+// Black Ram Electronics - BlackRamElectronics.com
+// ImgToArray
+// This application takes a gif image/animation file and converts it to a C array.
+// For an example uasage of the output please see our mono OLED demo.
+// Only mono images are currently supported.
+//
+// A lot of the gif processing routines have been taken for the following artical:
+// http://commandlinefanatic.com/cgi-bin/showarticle.cgi?article=art011
+//====================================================================================
+
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -6,7 +17,6 @@
 #include <windows.h>
 
 using namespace std;
-
 
 enum
 {
@@ -103,8 +113,7 @@ void StoreFrame(const unsigned char *data, int length, int width, int height);
 void PrintFrames(frame_store_t *frames);
 void OutputToArray(char *filename, frame_store_t *frames);
 
-int DebugSetting = 3;
-
+int DebugSetting = 0;
 
 #define EXTENSION_INTRODUCER   0x21
 #define IMAGE_DESCRIPTOR       0x2C
@@ -120,6 +129,7 @@ char Filename[256];
 unsigned char FileBuffer[MAXFILELEN + 1];
 int FileLength;
 char FileType;
+unsigned short Delay = 100;
 
 frame_store_t Frames;
 
@@ -163,38 +173,34 @@ int main(int argc, char *argv[])
 	
 	// Read file to buffer
 	FILE *fp = fopen(Filename, "rb");
+	if(fp == NULL)
+	{
+		printf("Unable to open file %s\r\n", Filename);
+		return(0);
+	}
 	
-	// obtain file size:
+	// Obtain file size:
 	fseek (fp , 0 , SEEK_END);
 	FileLength = ftell (fp);
 	rewind (fp);
-	printf("File size: %d bytes\r\n", FileLength);
+	dprintf(1, "File size: %d bytes\r\n", FileLength);
 	
 	if(fp != NULL)
 	{
-		//bytes_read = fread(FileBuffer, sizeof(char), FileLength, fp);
 		bytes_read = fread(FileBuffer, 1, FileLength, fp);
 		if(FileLength != bytes_read)
 		{
 			printf("Error reading file. %d of %d read.\r\n", bytes_read, FileLength);
 			return(0);
 		}
-		else
-		{
-			//FileLength+=635;
-			//FileBuffer[++FileLength] = '\0';
-		}
 		fclose(fp);
 	}
 	
-	//DumbBufferToHex(FileBuffer, FileLength);
-	
 	ProcessGifFile();
-	
-	//PrintFrames(&Frames);
-	
 	OutputToArray(Filename, &Frames);
 	
+	printf("Frames in in file: %d\r\n", Frames.frames.size());
+	printf("File conversion complete\r\n");
 	return(0);
 }
 
@@ -203,7 +209,7 @@ void dprintf(int debug_level, char *fmt, ...)
 {
 	if(DebugSetting >= debug_level)
 	{
-		va_list arguments;	// A place to store our list of arguments
+		va_list arguments;			// A place to store our list of arguments
 		va_start(arguments, fmt);	// Initialise arguments
 		vprintf(fmt, arguments);
 		va_end(arguments);			// Clean up after use
@@ -364,7 +370,7 @@ int ProcessGifFile(void)
 	while(block_type != TRAILER)
 	{
 		block_type = *file_ptr++;
-		printf("block_type: %2.2X\r\n", block_type);
+		dprintf(2, "block_type: %2.2X\r\n", block_type);
 		switch(block_type)
 		{
 			case IMAGE_DESCRIPTOR:
@@ -389,7 +395,6 @@ int ProcessGifFile(void)
 				return(0);
 		}
 	}
-	
 	return(0);
 }
 
@@ -411,23 +416,18 @@ int process_image_descriptor(unsigned char **file, rgb *gct, int gct_size, int r
 	*file += 9;
 
 	// TODO if LCT = true, read the LCT
-
 	disposition = 1;
 
-	/*if ( read( gif_file, &lzw_code_size, 1 ) < 1 )
-	{
-		perror( "Invalid GIF file (too short) [8]: " );
-		disposition = 0;
-		goto done;
-	}*/
 	lzw_code_size = **file;
 	*file += 1;
-	printf("lzw_code_size: %d\r\n", lzw_code_size);
+	dprintf(3,"lzw_code_size: %d\r\n", lzw_code_size);
 
 	compressed_data_length = read_sub_blocks(file, &compressed_data);
 	if(compressed_data_length == -1)
 	{
 		printf("Error reading sub blocks!\r\n");
+		free(compressed_data);
+		return(0);
 	}
 	 
 	uncompressed_data_length = image_descriptor.image_width * image_descriptor.image_height;
@@ -436,323 +436,280 @@ int process_image_descriptor(unsigned char **file, rgb *gct, int gct_size, int r
 
 	uncompress( lzw_code_size, compressed_data, compressed_data_length, uncompressed_data );
 
-	printf("compressed_data_length: %d\r\n", compressed_data_length);
-	printf("uncompressed_data_length: %d\r\n", uncompressed_data_length);
-	printf("Dump of uncompressed data\r\n");
-	//DumpImg(uncompressed_data, uncompressed_data_length, image_descriptor.image_width);
-	//DumbBufferToHex(uncompressed_data, uncompressed_data_length);
+	dprintf(3, "compressed_data_length: %d\r\n", compressed_data_length);
+	dprintf(3, "uncompressed_data_length: %d\r\n", uncompressed_data_length);
+	dprintf(3, "Dump of uncompressed data\r\n");
 	StoreFrame(uncompressed_data, uncompressed_data_length, image_descriptor.image_width, image_descriptor.image_height);
 	
-	printf("looking for stop code\r\n");
+	dprintf(2, "looking for stop code\r\n");
 	ptr = compressed_data;
 	for(i = 0; i < compressed_data_length; i++)
 	{
 		if(*ptr == 0x05)
 		{
-			printf("StopCode found at: %\r\n", i);
+			dprintf(2, "StopCode found at: %\r\n", i);
 		}
 	}
 	
-done:
-  if ( compressed_data )
-    free( compressed_data );
+	if(compressed_data)
+	{
+		free(compressed_data);
+	}
 
-  if ( uncompressed_data )
-    free( uncompressed_data );
+	if(uncompressed_data)
+	{
+		free(uncompressed_data);
+	}
 
-  return disposition;
+	return disposition;
 }
 
 //====================================================================================
 static int read_sub_blocks(unsigned char **gif_file, unsigned char **data )
 {
-  int data_length;
-  int index;
-  unsigned char block_size, data_read;
+	int data_length;
+	int index;
+	unsigned char block_size;
 
-  // Everything following are data sub-blocks, until a 0-sized block is
-  // encountered.
-  data_length = 0;
-  *data = NULL;
-  index = 0;
+	// Everything following are data sub-blocks, until a 0-sized block is encountered.
+	data_length = 0;
+	*data = NULL;
+	index = 0;
 
-  while(1)
-  {	
-	block_size = **gif_file;
-	*gif_file += 1;
+	while(1)
+	{
+		block_size = **gif_file;
+		*gif_file += 1;
 
-    if(block_size == 0)  // end of sub-blocks
-    {
-		printf("End of sub blocks\n\r");
-		break;
-    }
+		if(block_size == 0)  // end of sub-blocks
+		{
+			dprintf(2, "End of sub blocks\n\r");
+			break;
+		}
+		dprintf(3, "block_size: %d\r\n", block_size);
+
+		data_length += block_size;
+		*data = (unsigned char*)realloc(*data, data_length);
+
+		// TODO this could be split across block size boundaries
 	
-	printf("block_size: %d\r\n", block_size);
-
-    data_length += block_size;
-    *data = (unsigned char*)realloc( *data, data_length );
-
-    // TODO this could be split across block size boundaries
-	
-	memcpy(*data + index, *gif_file, block_size);
-	*gif_file += block_size;
-	
-	/*data_read = read( gif_file, *data + index, block_size );
-    if (data_read < block_size )
-    {
-		printf("block_size read: %d of %d\r\n", data_read, block_size);
-      perror( "Invalid GIF file (too short) [10]: ");
-      //return -1;
-    }*/
-
-    index += block_size;
-  }
-	printf("data_length: %d\r\n", data_length);
-  return data_length;
+		memcpy(*data + index, *gif_file, block_size);
+		*gif_file += block_size;
+		index += block_size;
+	}
+	dprintf(3, "data_length: %d\r\n", data_length);
+	return(data_length);
 }
 
 
 //====================================================================================
-int uncompress( int code_length,
-                const unsigned char *input,
-                int input_length,
-                unsigned char *out )
+int uncompress(int code_length, const unsigned char *input, int input_length, unsigned char *out)
 {
-  int maxbits;
-  int i, bit;
-  int code, prev = -1;
-  dictionary_entry_t *dictionary;
-  int dictionary_ind;
-  unsigned int mask = 0x01;
-  int reset_code_length;
-  int clear_code; // This varies depending on code_length
-  int stop_code;  // one more than clear code
-  int match_len;
+	int i, bit;
+	int code, prev = -1;
+	dictionary_entry_t *dictionary;
+	int dictionary_ind;
+	unsigned int mask = 0x01;
+	int reset_code_length;
+	int clear_code; // This varies depending on code_length
+	int stop_code;  // one more than clear code
+	int match_len;
 
-  clear_code = 1 << ( code_length );
-  stop_code = clear_code + 1;
-  // To handle clear codes
-  reset_code_length = code_length;
+	clear_code = 1 << (code_length);
+	stop_code = clear_code + 1;
+	// To handle clear codes
+	reset_code_length = code_length;
 
-  // Create a dictionary large enough to hold "code_length" entries.
-  // Once the dictionary overflows, code_length increases
-  dictionary = ( dictionary_entry_t * ) 
-    malloc( sizeof( dictionary_entry_t ) * ( 1 << ( code_length + 1 ) ) );
+	// Create a dictionary large enough to hold "code_length" entries.
+	// Once the dictionary overflows, code_length increases
+	dictionary = (dictionary_entry_t *) malloc(sizeof( dictionary_entry_t) * (1 << (code_length + 1)));
 
-  // Initialize the first 2^code_len entries of the dictionary with their
-  // indices.  The rest of the entries will be built up dynamically.
+	// Initialize the first 2^code_len entries of the dictionary with their
+	// indices.  The rest of the entries will be built up dynamically.
 
-  // Technically, it shouldn't be necessary to initialize the
-  // dictionary.  The spec says that the encoder "should output a
-  // clear code as the first code in the image data stream".  It doesn't
-  // say must, though...
-  for ( dictionary_ind = 0; 
-        dictionary_ind < ( 1 << code_length ); 
-        dictionary_ind++ )
-  {
-    dictionary[ dictionary_ind ].byte = dictionary_ind;
-    // XXX this only works because prev is a 32-bit int (> 12 bits)
-    dictionary[ dictionary_ind ].prev = -1;
-    dictionary[ dictionary_ind ].len = 1;
-  }
+	// Technically, it shouldn't be necessary to initialize the
+	// dictionary.  The spec says that the encoder "should output a
+	// clear code as the first code in the image data stream".  It doesn't
+	// say must, though...
+	for(dictionary_ind = 0; dictionary_ind < (1 << code_length); dictionary_ind++)
+	{
+		dictionary[ dictionary_ind ].byte = dictionary_ind;
+		// XXX this only works because prev is a 32-bit int (> 12 bits)
+		dictionary[ dictionary_ind ].prev = -1;
+		dictionary[ dictionary_ind ].len = 1;
+	}
 
-  // 2^code_len + 1 is the special "end" code; don't give it an entry here
-  dictionary_ind++;
-  dictionary_ind++;
-  
-  // TODO verify that the very last byte is clear_code + 1
-  while ( input_length )
-  {
-    code = 0x0;
-    // Always read one more bit than the code length
-    for ( i = 0; i < ( code_length + 1 ); i++ )
-    {
-      // This is different than in the file read example; that 
-      // was a call to "next_bit"
-      bit = ( *input & mask ) ? 1 : 0;
-      mask <<= 1;
+	// 2^code_len + 1 is the special "end" code; don't give it an entry here
+	dictionary_ind++;
+	dictionary_ind++;
 
-      if ( mask == 0x100 )
-      {
-        mask = 0x01;
-        input++;
-        input_length--;
-      }
+	// TODO verify that the very last byte is clear_code + 1
+	while(input_length)
+	{
+		code = 0x0;
+		// Always read one more bit than the code length
+		for(i = 0; i < (code_length + 1); i++)
+		{
+			// This is different than in the file read example; that 
+			// was a call to "next_bit"
+			bit = (*input & mask) ? 1 : 0;
+			mask <<= 1;
 
-      code = code | ( bit << i );
-    }
+			if(mask == 0x100)
+			{
+				mask = 0x01;
+				input++;
+				input_length--;
+			}
+			code = code | (bit << i);
+		}
 
-    if ( code == clear_code )
-    {
-      code_length = reset_code_length;
-      dictionary = ( dictionary_entry_t * ) realloc( dictionary,
-        sizeof( dictionary_entry_t ) * ( 1 << ( code_length + 1 ) ) );
+		if(code == clear_code)
+		{
+			code_length = reset_code_length;
+			dictionary = (dictionary_entry_t *) realloc(dictionary, sizeof(dictionary_entry_t) * (1 << (code_length + 1)));
 
-      for ( dictionary_ind = 0; 
-            dictionary_ind < ( 1 << code_length ); 
-            dictionary_ind++ )
-      {
-        dictionary[ dictionary_ind ].byte = dictionary_ind;
-        // XXX this only works because prev is a 32-bit int (> 12 bits)
-        dictionary[ dictionary_ind ].prev = -1;
-        dictionary[ dictionary_ind ].len = 1;
-      }
-      dictionary_ind++;
-      dictionary_ind++;
-      prev = -1;
-      continue;
-    }
-    else if ( code == stop_code )
-    {
-      if ( input_length > 1 )
-      {
-		printf("stop_code = 0x%2.2X, input_length = %d\r\n", stop_code, input_length);
-        fprintf( stderr, "Malformed GIF (early stop code)\n" );
-        //exit( 0 );
-      }
-      break;
-    }
+			for(dictionary_ind = 0; dictionary_ind < (1 << code_length); dictionary_ind++)
+			{
+				dictionary[ dictionary_ind ].byte = dictionary_ind;
+				// XXX this only works because prev is a 32-bit int (> 12 bits)
+				dictionary[ dictionary_ind ].prev = -1;
+				dictionary[ dictionary_ind ].len = 1;
+			}
+			dictionary_ind++;
+			dictionary_ind++;
+			prev = -1;
+			continue;
+		}
+		else if(code == stop_code)
+		{
+			if(input_length > 1)
+			{
+				printf("stop_code = 0x%2.2X, input_length = %d\r\n", stop_code, input_length);
+				fprintf(stderr, "Malformed GIF (early stop code)\n");
+				//exit( 0 );
+			}
+			break;
+		}
 
-    // Update the dictionary with this character plus the _entry_
-    // (character or string) that came before it
-    if ( ( prev > -1 ) && ( code_length < 12 ) )
-    {
-      if ( code > dictionary_ind )
-      {
-        fprintf( stderr, "code = %.02x, but dictionary_ind = %.02x\n",
-          code, dictionary_ind );
-        exit( 0 );
-      }
+		// Update the dictionary with this character plus the _entry_
+		// (character or string) that came before it
+		if((prev > -1) && (code_length < 12))
+		{
+			if(code > dictionary_ind)
+			{
+				fprintf(stderr, "code = %.02x, but dictionary_ind = %.02x\n", code, dictionary_ind);
+				exit(0);
+			}
 
-      // Special handling for KwKwK
-      if ( code == dictionary_ind )
-      {
-        int ptr = prev;
+			// Special handling for KwKwK
+			if(code == dictionary_ind)
+			{
+				int ptr = prev;
 
-        while ( dictionary[ ptr ].prev != -1 )
-        {
-          ptr = dictionary[ ptr ].prev;
-        }
-        dictionary[ dictionary_ind ].byte = dictionary[ ptr ].byte;
-      }
-      else
-      {
-        int ptr = code;
-        while ( dictionary[ ptr ].prev != -1 )
-        {
-          ptr = dictionary[ ptr ].prev;
-        }
-        dictionary[ dictionary_ind ].byte = dictionary[ ptr ].byte;
-      }
+				while(dictionary[ptr].prev != -1)
+				{
+					ptr = dictionary[ptr].prev;
+				}
+				dictionary[dictionary_ind].byte = dictionary[ptr].byte;
+			}
+			else
+			{
+				int ptr = code;
+				while(dictionary[ptr].prev != -1)
+				{
+					ptr = dictionary[ptr].prev;
+				}
+				dictionary[dictionary_ind].byte = dictionary[ptr].byte;
+			}
 
-      dictionary[ dictionary_ind ].prev = prev;
+			dictionary[dictionary_ind].prev = prev;
+			dictionary[dictionary_ind].len = dictionary[prev].len + 1;
+			dictionary_ind++;
 
-      dictionary[ dictionary_ind ].len = dictionary[ prev ].len + 1;
+			// GIF89a mandates that this stops at 12 bits
+			if((dictionary_ind == (1 << (code_length + 1))) && (code_length < 11))
+			{
+				code_length++;
+				dictionary = (dictionary_entry_t *)realloc(dictionary, sizeof(dictionary_entry_t) * (1 << (code_length + 1)));
+			}
+		}
 
-      dictionary_ind++;
+		prev = code;
 
-      // GIF89a mandates that this stops at 12 bits
-      if ( ( dictionary_ind == ( 1 << ( code_length + 1 ) ) ) &&
-           ( code_length < 11 ) )
-      {
-        code_length++;
-
-        dictionary = ( dictionary_entry_t * ) realloc( dictionary,
-          sizeof( dictionary_entry_t ) * ( 1 << ( code_length + 1 ) ) );
-      }
-    }
-
-    prev = code;
-
-    // Now copy the dictionary entry backwards into "out"
-    match_len = dictionary[ code ].len;
-    while ( code != -1 )
-    {
-      out[ dictionary[ code ].len - 1 ] = dictionary[ code ].byte;
-      if ( dictionary[ code ].prev == code )
-      {
-        fprintf( stderr, "Internal error; self-reference." );
-        exit( 0 );
-      }
-      code = dictionary[ code ].prev;
-    }
-
-    out += match_len;
-  }
+		// Now copy the dictionary entry backwards into "out"
+		match_len = dictionary[code].len;
+		while(code != -1)
+		{
+			out[dictionary[code].len - 1] = dictionary[code].byte;
+			if(dictionary[code].prev == code)
+			{
+				fprintf(stderr, "Internal error; self-reference.");
+				exit(0);
+			}
+			code = dictionary[code].prev;
+		}
+		out += match_len;
+	}
+	return(0);
 }
 
 
 //====================================================================================
 static int process_extension(unsigned char **gif_file)
 {
-  extension_t extension;
-  graphic_control_extension_t gce;
-  application_extension_t application;
-  plaintext_extension_t plaintext;
-  unsigned char *extension_data = NULL;
-  int extension_data_length;
+	extension_t extension;
+	graphic_control_extension_t gce;
+	application_extension_t application;
+	plaintext_extension_t plaintext;
+	unsigned char *extension_data = NULL;
+	int extension_data_length;
 
-  /*if ( read( gif_file, &extension, 2 ) < 2 )
-  {
-    perror( "Invalid GIF file (too short) [7]: " );
-    return 0;
-  }*/
-  
-  memcpy(&extension, *gif_file, 2);
-  *gif_file += 2;
-  
-  printf("In process_extension\r\n");
+	memcpy(&extension, *gif_file, 2);
+	*gif_file += 2;
 
-  switch ( extension.extension_code )
-  {
-    case GRAPHIC_CONTROL:
-      /*if ( read( gif_file, &gce, 4 ) < 4 )
-      {
-        perror( "Invalid GIF file (too short) [6]: " );
-        return 0;
-      }*/
-		printf("GRAPHIC_CONTROL found\r\n");
-		memcpy(&gce, *gif_file, 4);
-		*gif_file += 4;
+	dprintf(2,"In process_extension\r\n");
 
-      break;
-    case APPLICATION_EXTENSION:
-      /*if ( read( gif_file, &application, 11 ) < 11 )
-      {
-        perror( "Invalid GIF file (too short) [5]: " );
-        return 0;
-      }*/
-		printf("APPLICATION_EXTENSION found\r\n");
-		memcpy(&application, *gif_file, 11);
-		*gif_file += 11;
-      break;
-    case 0xFE:
-      // comment extension; do nothing - all the data is in the
-      // sub-blocks that follow.
-      break;
-    case 0x01:
-      /*if ( read( gif_file, &plaintext, 12 ) < 12 )
-      {
-        perror( "Invalid GIF file (too short) [4]: " );
-        return 0;
-      }*/
-		printf("plaintext found\r\n");
-		memcpy(&plaintext, *gif_file, 12);
-		*gif_file += 12;
-      break;
-    default:
-      fprintf( stderr, "Unrecognized extension code.\n" );
-      exit( 0 );
-  }
+	switch(extension.extension_code)
+	{
+		case GRAPHIC_CONTROL:
+			gce.fields = **gif_file;
+			gce.delay_time = *(*gif_file+1);
+			gce.delay_time += *(*gif_file+2) * 256;
+			gce.transparent_color_index = *(*gif_file+3);
+			*gif_file += 4;
+			
+			Delay = gce.delay_time * 10;	// Delay is stored as 1/100s but we want ms
+			dprintf(2, "GRAPHIC_CONTROL found, duration: %dms\r\n", Delay);
+			break;
+		case APPLICATION_EXTENSION:
+			dprintf(2, "APPLICATION_EXTENSION found\r\n");
+			memcpy(&application, *gif_file, 11);
+			*gif_file += 11;
+			break;
+		case 0xFE:
+			// comment extension; do nothing - all the data is in the
+			// sub-blocks that follow.
+			break;
+		case 0x01:
+			dprintf(2, "plaintext found\r\n");
+			memcpy(&plaintext, *gif_file, 12);
+			*gif_file += 12;
+			break;
+		default:
+			printf("Unrecognized extension code.\n" );
+			exit(0);
+	}
 
-  // All extensions are followed by data sub-blocks; even if it's
-  // just a single data sub-block of length 0
-  extension_data_length = read_sub_blocks( gif_file, &extension_data );
+	// All extensions are followed by data sub-blocks; even if it's
+	// just a single data sub-block of length 0
+	extension_data_length = read_sub_blocks( gif_file, &extension_data );
 
-  if ( extension_data != NULL )
-    free( extension_data );
-
-  return 1;
+	if(extension_data != NULL)
+	{
+		free(extension_data);
+	}
+	return(1);
 }
 
 //====================================================================================
@@ -812,9 +769,9 @@ void PrintFrames(frame_store_t *frames)
 			
 			*data_ptr = 0;
 			
-			printf("%s", data);
+			dprintf(1, "%s", data);
 			
-			Sleep(250);
+			//Sleep(250);
 		}
 	}
 	free(data);
@@ -824,7 +781,7 @@ void PrintFrames(frame_store_t *frames)
 void OutputToArray(char *filename, frame_store_t *frames)
 {
 	char new_filename[256], h_def_filename[256], array_name[256];
-	int i, j, frame_number, col_count, pixel_count;
+	int i, col_count, pixel_count;
 	char *input_ptr, *output_ptr;
 	unsigned char data_byte;
 	
@@ -868,73 +825,99 @@ void OutputToArray(char *filename, frame_store_t *frames)
 	
 	FILE * output;
     output = fopen(new_filename, "w");
+	
+	fprintf(output, "//====================================================================================\n");
+	fprintf(output, "// Black Ram Electronics - BlackRamElectronics.com\n");
+	fprintf(output, "// This file was auto genarated by the ImgToArray application.\n");
+	fprintf(output, "// For more information please visit our website.\n");
+	fprintf(output, "//====================================================================================\n");
+	
 	fprintf(output, "#ifndef __%s__\n", h_def_filename);
 	fprintf(output, "#define __%s__\n\n", h_def_filename);
 
+	fprintf(output, "#define IMG_WIDTH %d\n", frames->width);
+	fprintf(output, "#define IMG_HEIGHT %d\n\n", frames->height);
+	
 	vector<frame_t>::iterator frames_iter;
-	frame_number = 0;
 	col_count = 0;
-	for(frames_iter = frames->frames.begin(); frames_iter != frames->frames.end(); frames_iter++)
+	
+	// Check if we have a single image
+	if(frames->frames.size() == 1)
 	{
-		if(frames->frames.size() == 1)
+		frames_iter = frames->frames.begin();
+		fprintf(output, "const unsigned char %s[]=\n{", array_name);
+		pixel_count = 0;
+		while(pixel_count <(frames->width * frames->height))
 		{
-			fprintf(output, "unsigned char %s[]=\n{", array_name);
-			pixel_count = 0;
-			while(pixel_count <(frames->width * frames->height))
+			data_byte = 0;
+			for(i = 0; i < 8; i++)
 			{
-				data_byte = 0;
-				for(i = 0; i < 8; i++)
+				if((*frames_iter).data[pixel_count + (i * frames->width)] != 0x01)
 				{
-					if((*frames_iter).data[pixel_count + (i * frames->width)] != 0x01)
-					{
-						data_byte |= (0x01 << i);
-					}
+					data_byte |= (0x01 << i);
 				}
-				
-				pixel_count++;
-				if((pixel_count % frames->width) == 0)
-				{
-					pixel_count += 7 * frames->width;
-				}
-				
-				if((col_count++ % 16) == 0)
-				{
-					fprintf(output, "\n\t");
-				}
-				fprintf(output, "0x%2.2X, ", data_byte);
 			}
-		}
-		else
-		{
-			fprintf(output, "unsigned char %s%d[]=\n{", array_name, frame_number);
-			pixel_count = 0;
-			while(pixel_count <(frames->width * frames->height))
+					
+			pixel_count++;
+			if((pixel_count % frames->width) == 0)
 			{
-				data_byte = 0;
-				for(i = 0; i < 8; i++)
-				{
-					if((*frames_iter).data[pixel_count + (i * frames->width)] != 0x01)
-					{
-						data_byte |= (0x01 << i);
-					}
-				}
-				
-				pixel_count++;
-				if((pixel_count % frames->width) == 0)
-				{
-					pixel_count += 7 * frames->width;
-				}
-				
-				if((col_count++ % 16) == 0)
-				{
-					fprintf(output, "\n\t");
-				}
-				fprintf(output, "0x%2.2X, ", data_byte);
+				pixel_count += 7 * frames->width;
 			}
+					
+			if((col_count++ % 16) == 0)
+			{
+				fprintf(output, "\n\t");
+			}
+			fprintf(output, "0x%2.2X, ", data_byte);
 		}
 		fprintf(output, "\n};\n\n");
-		frame_number++;
 	}
+	else	// Multiple frames / images
+	{	
+		fprintf(output, "#define FRAME_COUNT %d\n", frames->frames.size());
+		fprintf(output, "#define FRAME_DELAY %d\n\n", Delay);
+		fprintf(output, "const unsigned char %s[%d][(%d*%d)/8]=\n{", array_name, frames->frames.size(), frames->width, frames->height);
+		for(frames_iter = frames->frames.begin(); frames_iter != frames->frames.end(); frames_iter++)
+		{
+			fprintf(output, "{");
+			pixel_count = 0;
+			while(pixel_count <(frames->width * frames->height))
+			{
+				data_byte = 0;
+				for(i = 0; i < 8; i++)
+				{
+					if((*frames_iter).data[pixel_count + (i * frames->width)] != 0x01)
+					{
+						data_byte |= (0x01 << i);
+					}
+				}
+					
+				pixel_count++;
+				if((pixel_count % frames->width) == 0)
+				{
+					pixel_count += 7 * frames->width;
+				}
+					
+				if((col_count++ % 16) == 0)
+				{
+					fprintf(output, "\n\t");
+				}
+				fprintf(output, "0x%2.2X, ", data_byte);
+			}
+			
+			// If this the last frame then no comma
+			if((frames_iter + 1) == frames->frames.end())
+			{
+				fprintf(output, "\n}");
+			}
+			else
+			{
+				fprintf(output, "\n}\n,\n");
+			}
+		}
+		fprintf(output, "};\n\n");
+	}
+	// Add end of #define for the file
 	fprintf(output, "#endif /*__%s__*/\n", h_def_filename);
     fclose(output);
 }
